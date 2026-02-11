@@ -1,0 +1,313 @@
+YourProject/
+│
+├── Controllers/
+│   └── UsersController.cs
+│
+├── Models/
+│   └── User.cs
+│
+├── DTOs/
+│   ├── CreateUserDto.cs
+│   └── UpdateUserDto.cs
+│
+├── Repositories/
+│   └── UserStore.cs
+│
+├── Program.cs
+├── appsettings.json
+└── UserManagementAPI.csproj
+
+=============================================================================================
+Project Name: UserManagementAPI
+==============================================================================================
+Controllers/UsersController.cs
+=============================================================================================
+using Microsoft.AspNetCore.Mvc;
+using System.Collections.Generic;
+using System.ComponentModel.DataAnnotations;
+//using UserManagementAPI.Models;
+//using UserManagementAPI.Services; 
+[ApiController]
+[Route("api/[controller]")]
+public class UsersController : ControllerBase
+{
+    // GET: api/users
+    [HttpGet]
+    public IActionResult GetUsers()
+    {
+        var users = UserStore.GetAll();
+        return Ok(users);
+    }
+
+    // GET: api/users/{id}
+    [HttpGet("{id:int}")]
+    public IActionResult GetUser(int id)
+    {
+        var user = UserStore.Get(id);
+
+        if (user == null)
+            return NotFound(new { Message = "User not found" });
+
+        return Ok(user);
+    }
+
+    // POST: api/users
+    [HttpPost]
+    public IActionResult CreateUser([FromBody] CreateUserDto dto)
+    {
+        if (!ModelState.IsValid)
+            return BadRequest(ModelState);
+
+        if (UserStore.EmailExists(dto.Email))
+            return Conflict(new { Message = "Email already exists" });
+
+        var user = new User
+        {
+            FirstName = dto.FirstName,
+            LastName = dto.LastName,
+            Email = dto.Email
+        };
+
+        var created = UserStore.Add(user);
+
+        return CreatedAtAction(nameof(GetUser), new { id = created.Id }, created);
+    }
+
+    // PUT: api/users/{id}
+    [HttpPut("{id:int}")]
+    public IActionResult UpdateUser(int id, [FromBody] UpdateUserDto dto)
+    {
+        if (!ModelState.IsValid)
+            return BadRequest(ModelState);
+
+        var existing = UserStore.Get(id);
+        if (existing == null)
+            return NotFound(new { Message = "User not found" });
+
+        if (UserStore.EmailExists(dto.Email, excludeId: id))
+            return Conflict(new { Message = "Email already exists" });
+
+        var updated = new User
+        {
+            FirstName = dto.FirstName,
+            LastName = dto.LastName,
+            Email = dto.Email,
+            CreatedAt = existing.CreatedAt
+        };
+
+        UserStore.Update(id, updated);
+
+        return NoContent();
+    }
+
+    // DELETE: api/users/{id}
+    [HttpDelete("{id:int}")]
+    public IActionResult DeleteUser(int id)
+    {
+        var deleted = UserStore.Delete(id);
+
+        if (!deleted)
+            return NotFound(new { Message = "User not found" });
+
+        return NoContent();
+    }
+}
+===================================================================================
+Models/User.cs
+====================================================================================
+// Models/User.cs
+public class User
+{
+    public int Id { get; set; }
+
+    public string FirstName { get; set; } = string.Empty;
+
+    public string LastName { get; set; } = string.Empty;
+
+    public string Email { get; set; } = string.Empty;
+
+    public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
+}
+
+======================================================================================
+DTOs/ CreateUserDto.cs    
+======================================================================================
+using System.ComponentModel.DataAnnotations;
+// DTOs/CreateUserDto.cs
+public class CreateUserDto
+{
+    [Required, MaxLength(50)]
+    public string FirstName { get; set; } = string.Empty;
+
+    [Required, MaxLength(50)]
+    public string LastName { get; set; } = string.Empty;
+
+    [Required, EmailAddress]
+    public string Email { get; set; } = string.Empty;
+}
+
+===============================================
+DTOs/UpdateUserDto.cs
+===============================================
+using System.ComponentModel.DataAnnotations;
+// DTOs/UpdateUserDto.cs
+public class UpdateUserDto
+{
+    [Required, MaxLength(50)]
+    public string FirstName { get; set; } = string.Empty;
+
+    [Required, MaxLength(50)]
+    public string LastName { get; set; } = string.Empty;
+
+    [Required, EmailAddress]
+    public string Email { get; set; } = string.Empty;
+}
+
+============================================================
+Repositories/UserStore.cs
+============================================================
+// Repositories/UserStore.cs
+public static class UserStore
+{
+    private static readonly Dictionary<int, User> _users = new();
+    private static int _nextId = 1;
+    private static readonly object _lock = new();
+
+    public static IEnumerable<User> GetAll()
+    {
+        lock (_lock)
+        {
+            return _users.Values.ToList();
+        }
+    }
+// Get user by ID, returns null if not found
+    public static User? Get(int id)
+    {
+        lock (_lock)
+        {
+            _users.TryGetValue(id, out var user);
+            return user;
+        }
+    }
+
+    public static User Add(User user)
+    {
+        lock (_lock)
+        {
+            user.Id = _nextId++;
+            _users[user.Id] = user;
+            return user;
+        }
+    }
+// Update user by ID, returns false if user not found
+    public static bool Update(int id, User updated)
+    {
+        lock (_lock)
+        {
+            if (!_users.ContainsKey(id))
+                return false;
+
+            updated.Id = id;
+            _users[id] = updated;
+            return true;
+        }
+    }
+// Delete user by ID, returns false if user not found
+    public static bool Delete(int id)
+    {
+        lock (_lock)
+        {
+            return _users.Remove(id);
+        }
+    }
+// Check if email exists, optionally excluding a specific user ID (for updates)
+    public static bool EmailExists(string email, int? excludeId = null)
+    {
+        lock (_lock)
+        {
+            return _users.Values.Any(u =>
+                u.Email.Equals(email, StringComparison.OrdinalIgnoreCase)
+                && (!excludeId.HasValue || u.Id != excludeId.Value));
+        }
+    }
+}
+
+==================================================================================
+Program.cs
+==================================================================================
+var builder = WebApplication.CreateBuilder(args);
+// Add services to the container.
+// Learn more about configuring OpenAPI at https://aka.ms/aspnet/openapi
+//builder.Services.AddOpenApi();
+//builder.Services.AddScoped<IUserService, UserService>();
+builder.Services.AddControllers();
+var app = builder.Build();
+app.UseAuthorization();
+app.MapControllers();
+
+app.Run();
+===================================================================================
+appsettings.json
+===================================================================================
+{
+  "Logging": {
+    "LogLevel": {
+      "Default": "Information",
+      "Microsoft.AspNetCore": "Warning"
+    }
+  },
+  "AllowedHosts": "*"
+}
+===================================================================================
+appsettings.Development.json
+===================================================================================
+{
+  "Logging": {
+    "LogLevel": {
+      "Default": "Information",
+      "Microsoft.AspNetCore": "Warning"
+    }
+  }
+}
+
+
+===================================================================================
+UserManagementAPI.csproj
+===================================================================================
+
+<Project Sdk="Microsoft.NET.Sdk.Web">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.AspNetCore.OpenApi" Version="10.0.1" />
+  </ItemGroup>
+</Project>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
